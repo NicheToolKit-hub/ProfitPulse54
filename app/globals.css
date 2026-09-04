@@ -1,0 +1,70 @@
+@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Inter:wght@400;500;600;700&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    /* ProfitPulse dark identity — Deep Slate, Cyan, Pulse Green */
+    --background: 222 47% 8%;
+    --foreground: 210 40% 98%;
+    --card: 215 28% 13%;
+    --card-foreground: 210 40% 98%;
+    --popover: 215 28% 13%;
+    --popover-foreground: 210 40% 98%;
+    --primary: 189 94% 43%;
+    --primary-foreground: 222 47% 8%;
+    --secondary: 217 33% 20%;
+    --secondary-foreground: 210 40% 98%;
+    --muted: 217 33% 17%;
+    --muted-foreground: 215 20% 65%;
+    --accent: 160 84% 39%;
+    --accent-foreground: 222 47% 8%;
+    --destructive: 0 72% 51%;
+    --destructive-foreground: 210 40% 98%;
+    --border: 217 30% 22%;
+    --input: 217 30% 22%;
+    --ring: 189 94% 43%;
+    --chart-1: 189 94% 43%;
+    --chart-2: 160 84% 39%;
+    --chart-3: 217 91% 60%;
+    --chart-4: 43 96% 56%;
+    --chart-5: 271 81% 66%;
+    --radius: 0.75rem;
+    --sidebar-background: 222 47% 10%;
+    --sidebar-foreground: 210 40% 96%;
+    --sidebar-primary: 189 94% 43%;
+    --sidebar-primary-foreground: 222 47% 8%;
+    --sidebar-accent: 217 33% 17%;
+    --sidebar-accent-foreground: 210 40% 96%;
+    --sidebar-border: 217 30% 20%;
+    --sidebar-ring: 189 94% 43%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground;
+    font-family: 'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+}
+
+@layer utilities {
+  .pp-gradient {
+    background-image: radial-gradient(60% 60% at 50% 0%, hsl(189 94% 43% / 0.14) 0%, transparent 70%),
+      radial-gradient(50% 50% at 100% 100%, hsl(160 84% 39% / 0.12) 0%, transparent 70%);
+  }
+  .pp-grid {
+    background-image: linear-gradient(hsl(217 30% 22% / 0.5) 1px, transparent 1px),
+      linear-gradient(90deg, hsl(217 30% 22% / 0.5) 1px, transparent 1px);
+    background-size: 44px 44px;
+  }
+  .pp-glow {
+    box-shadow: 0 0 0 1px hsl(189 94% 43% / 0.15), 0 8px 40px -12px hsl(189 94% 43% / 0.35);
+  }
+}
