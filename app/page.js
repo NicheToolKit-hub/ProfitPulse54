@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState, useCallback } from 'react';
-import { Logo, PulseMark } from '@/components/Logo';
+import { Logo } from '@/components/Logo';
 import { NicheDashboard } from '@/components/dashboards';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -56,6 +56,7 @@ export default function App() {
   const [view, setView] = useState('landing');
   const [tenants, setTenants] = useState([]);
   const [active, setActive] = useState(null);
+  const [entryTab, setEntryTab] = useState('dashboard');
 
   const refreshTenants = useCallback(async () => {
     const t = await api.get('/tenants');
@@ -63,9 +64,45 @@ export default function App() {
     return t;
   }, []);
 
-  useEffect(() => { (async () => { await refreshTenants(); setLoading(false); })(); }, [refreshTenants]);
+  const enterApp = (tenant, tab = 'dashboard') => { setActive(tenant); setEntryTab(tab); setView('app'); };
 
-  const enterApp = (tenant) => { setActive(tenant); setView('app'); };
+  const pollPayment = useCallback(async (sessionId) => {
+    toast.loading('Confirming your payment…', { id: 'pp' });
+    for (let i = 0; i < 10; i++) {
+      const s = await api.get(`/payments/status?session_id=${sessionId}`);
+      if (s.status === 'paid' || s.paymentStatus === 'paid') {
+        toast.success('Payment received & posted to the ledger!', { id: 'pp' });
+        const list = await api.get('/tenants');
+        const list2 = Array.isArray(list) ? list : [];
+        setTenants(list2);
+        const t = list2.find((x) => x.id === s.tenantId) || list2[0];
+        if (t) enterApp(t, 'invoices');
+        return;
+      }
+      if (s.status === 'expired') break;
+      await new Promise((r) => setTimeout(r, 2000));
+    }
+    toast.error('Payment not confirmed yet. It will update shortly.', { id: 'pp' });
+  }, []);
+
+  useEffect(() => {
+    (async () => {
+      const list = await refreshTenants();
+      const params = new URLSearchParams(window.location.search);
+      const sessionId = params.get('session_id');
+      const cancelled = params.get('cancelled');
+      if (sessionId) {
+        window.history.replaceState({}, '', '/');
+        await pollPayment(sessionId);
+      } else if (cancelled) {
+        window.history.replaceState({}, '', '/');
+        toast.message('Checkout cancelled — no charge was made.');
+        const l = Array.isArray(list) ? list : [];
+        if (l.length) enterApp(l[0]);
+      }
+      setLoading(false);
+    })();
+  }, [refreshTenants, pollPayment]);
 
   const loadDemo = async () => {
     toast.loading('Spinning up demo workspaces…', { id: 'demo' });
@@ -77,10 +114,10 @@ export default function App() {
     toast.success('4 adaptive workspaces ready — switch niches from the top bar!');
   };
 
-  if (loading) return <div className="flex min-h-screen items-center justify-center bg-background"><PulseMark size={48} className="animate-pulse" /></div>;
+  if (loading) return <div className="flex min-h-screen items-center justify-center bg-background"><Logo variant="crest" size={80} className="animate-pulse" /></div>;
   if (view === 'landing') return <Landing tenants={tenants} onDemo={loadDemo} onStart={() => setView('onboarding')} onEnter={enterApp} />;
   if (view === 'onboarding') return <Onboarding onCancel={() => setView(tenants.length ? 'app' : 'landing')} onDone={async (t) => { await refreshTenants(); enterApp(t); }} />;
-  return <Workspace active={active} tenants={tenants} setActive={setActive} onNew={() => setView('onboarding')} refreshTenants={refreshTenants} />;
+  return <Workspace active={active} tenants={tenants} setActive={setActive} onNew={() => setView('onboarding')} refreshTenants={refreshTenants} initialTab={entryTab} />;
 }
 
 // ------------------------------- LANDING -------------------------------
@@ -88,7 +125,7 @@ function Landing({ onDemo, onStart, tenants, onEnter }) {
   return (
     <div className="min-h-screen pp-gradient">
       <header className="container flex items-center justify-between py-5">
-        <Logo />
+        <Logo variant="lockup" size={52} />
         <div className="flex items-center gap-2">
           {tenants.length > 0 && <Button variant="ghost" onClick={() => onEnter(tenants[0])}>Open Workspace</Button>}
           <Button variant="secondary" onClick={onStart}>Set up my business</Button>
@@ -144,7 +181,7 @@ function Onboarding({ onDone, onCancel }) {
   };
   return (
     <div className="min-h-screen pp-gradient">
-      <header className="container flex items-center justify-between py-5"><Logo /><Button variant="ghost" onClick={onCancel}>Cancel</Button></header>
+      <header className="container flex items-center justify-between py-5"><Logo variant="lockup" size={48} /><Button variant="ghost" onClick={onCancel}>Cancel</Button></header>
       <div className="container max-w-2xl py-6">
         <div className="mb-8 flex items-center gap-2">
           {[1, 2, 3].map((s) => (
@@ -207,8 +244,8 @@ function Onboarding({ onDone, onCancel }) {
 }
 
 // ------------------------------- WORKSPACE -------------------------------
-function Workspace({ active, tenants, setActive, onNew, refreshTenants }) {
-  const [tab, setTab] = useState('dashboard');
+function Workspace({ active, tenants, setActive, onNew, refreshTenants, initialTab = 'dashboard' }) {
+  const [tab, setTab] = useState(initialTab);
   const [dash, setDash] = useState(null);
   const [txns, setTxns] = useState([]);
   const [accounts, setAccounts] = useState([]);
@@ -251,7 +288,7 @@ function Workspace({ active, tenants, setActive, onNew, refreshTenants }) {
       <header className="sticky top-0 z-30 border-b border-border bg-background/80 backdrop-blur">
         <div className="container flex h-16 items-center justify-between gap-3">
           <div className="flex items-center gap-4">
-            <Logo size={28} />
+            <Logo variant="crest" size={44} />
             <Separator orientation="vertical" className="hidden h-6 md:block" />
             <Select value={active?.id} onValueChange={(id) => setActive(tenants.find((t) => t.id === id))}>
               <SelectTrigger className="w-[230px]"><SelectValue /></SelectTrigger>

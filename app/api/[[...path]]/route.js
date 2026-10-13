@@ -1,7 +1,7 @@
 import { MongoClient } from 'mongodb'
 import { v4 as uuidv4 } from 'uuid'
 import { NextResponse } from 'next/server'
-import { StripeProvider } from '@/lib/payments/stripe'
+import { EmergentStripeProvider } from '@/lib/payments/emergentStripe'
 
 // ---------------------------------------------------------------------------
 // Mongo connection (reused across invocations)
@@ -34,7 +34,7 @@ function cors(res) {
 }
 export async function OPTIONS() { return cors(new NextResponse(null, { status: 200 })) }
 
-const stripe = new StripeProvider()
+const stripe = new EmergentStripeProvider()
 const clean = (docs) => docs.map(({ _id, ...rest }) => rest)
 const daysAgo = (n) => { const d = new Date(); d.setDate(d.getDate() - n); return d }
 
@@ -498,45 +498,63 @@ async function handleRoute(request, { params }) {
       return cors(NextResponse.json(rest))
     }
     if (route === '/payments/providers' && method === 'GET') {
-      return cors(NextResponse.json({ providers: [{ id: 'stripe', name: 'Stripe', configured: stripe.isConfigured() }] }))
+      return cors(NextResponse.json({ providers: [{ id: 'stripe', name: 'Stripe (Emergent managed sandbox)', configured: stripe.isConfigured() }] }))
     }
     if (route === '/payments/checkout' && method === 'POST') {
       const b = await request.json()
       const inv = await d.collection('invoices').findOne({ id: b.invoiceId, status: 'open' })
       if (!inv) return cors(NextResponse.json({ error: 'Invoice not payable' }, { status: 404 }))
-      if (!stripe.isConfigured()) return cors(NextResponse.json({ error: 'Stripe is not configured. Add STRIPE_SECRET_KEY to enable live payments.', code: 'NO_STRIPE' }, { status: 400 }))
+      if (!stripe.isConfigured()) return cors(NextResponse.json({ error: 'Payments are not configured.', code: 'NO_STRIPE' }, { status: 400 }))
       try {
-        const checkout = await stripe.createCheckout({ ...inv, id: inv.id }, { base: process.env.NEXT_PUBLIC_BASE_URL })
+        const txId = uuidv4()
+        const checkout = await stripe.createCheckout(
+          { ...inv, id: inv.id },
+          { base: process.env.NEXT_PUBLIC_BASE_URL, metadata: { invoiceId: inv.id, tenantId: inv.tenantId, txId } }
+        )
+        // Immutable payment_transactions audit record (Emergent-managed Stripe)
+        await d.collection('payment_transactions').insertOne({
+          id: txId, provider: 'stripe', tenantId: inv.tenantId, invoiceId: inv.id,
+          sessionId: checkout.sessionId, amount: inv.total, currency: inv.currency || 'usd',
+          status: 'open', paymentStatus: 'unpaid', metadata: { invoiceNumber: inv.number },
+          createdAt: new Date(), updatedAt: new Date(),
+        })
         await d.collection('invoices').updateOne({ id: inv.id }, { $set: { stripeSessionId: checkout.sessionId, checkoutProvider: 'stripe' } })
-        return cors(NextResponse.json(checkout))
+        return cors(NextResponse.json({ url: checkout.url, sessionId: checkout.sessionId, txId }))
       } catch (err) { return cors(NextResponse.json({ error: err.message }, { status: 400 })) }
     }
-    if (route === '/stripe/webhook' && method === 'POST') {
-      let event
-      try { event = await stripe.verifyWebhook(request) } catch { return new NextResponse('Invalid signature', { status: 400 }) }
-      if (['checkout.session.completed', 'checkout.session.async_payment_succeeded'].includes(event.type)) {
-        const s = event.data.object
-        const invoiceId = s.metadata?.invoiceId
-        const tenantId = s.metadata?.tenantId
-        const amount = s.amount_total
-        const exists = await d.collection('payments').findOne({ providerEventId: event.id })
-        if (!exists && invoiceId) {
-          try {
-            await d.collection('payments').insertOne({ id: uuidv4(), provider: 'stripe', providerPaymentId: s.payment_intent || s.id, providerEventId: event.id, invoiceId, tenantId, amount, status: 'succeeded', createdAt: new Date() })
-            const inv = await d.collection('invoices').findOne({ id: invoiceId })
-            await d.collection('invoices').updateOne({ id: invoiceId }, { $set: { status: 'paid', paymentStatus: 'succeeded' }, $inc: { paidAmount: amount } })
-            if (tenantId) {
-              const tenant = await d.collection('tenants').findOne({ id: tenantId })
-              if (tenant) {
-                const { map } = buildCOA(tenant.niche)
-                const revAcct = map['Product Sales'] ? 'Product Sales' : (map['Client Services'] ? 'Client Services' : (map['Subscription Revenue'] ? 'Subscription Revenue' : 'Job Revenue'))
-                await postEntry(d, tenantId, map, { date: new Date(), description: `Payment received — ${inv?.number || invoiceId}`, category: revAcct, type: 'income', status: 'reconciled', metadata: { invoiceId, provider: 'stripe' }, lines: incomeLines(revAcct, amount) })
-              }
-            }
-          } catch (e) { /* duplicate — ignore */ }
-        }
+    // Polling-based fulfillment: proxy holds real Stripe keys, so status is authoritative.
+    if (route === '/payments/status' && method === 'GET') {
+      const sessionId = q('session_id')
+      if (!sessionId) return cors(NextResponse.json({ error: 'session_id required' }, { status: 400 }))
+      const tx = await d.collection('payment_transactions').findOne({ sessionId })
+      if (!tx) return cors(NextResponse.json({ error: 'Payment not found' }, { status: 404 }))
+      let live
+      try { live = await stripe.getStatus(sessionId) } catch (err) {
+        console.error('Stripe getStatus error:', err.message, err)
+        return cors(NextResponse.json({ status: tx.status, paymentStatus: tx.paymentStatus, invoiceId: tx.invoiceId, tenantId: tx.tenantId }))
       }
-      return new NextResponse('ok', { status: 200 })
+      if (live.paymentStatus === 'paid') {
+        // Guarded transition — only the first observer posts the ledger entry.
+        const claim = await d.collection('payment_transactions').updateOne(
+          { sessionId, status: { $ne: 'paid' } },
+          { $set: { status: 'paid', paymentStatus: 'paid', paidAt: new Date(), updatedAt: new Date() } }
+        )
+        if (claim.modifiedCount === 1) {
+          const inv = await d.collection('invoices').findOne({ id: tx.invoiceId })
+          await d.collection('invoices').updateOne({ id: tx.invoiceId }, { $set: { status: 'paid', paymentStatus: 'succeeded' }, $inc: { paidAmount: live.amountTotal } })
+          const tenant = await d.collection('tenants').findOne({ id: tx.tenantId })
+          if (tenant) {
+            const { map } = buildCOA(tenant.niche)
+            const revAcct = map['Product Sales'] ? 'Product Sales' : (map['Client Services'] ? 'Client Services' : (map['Subscription Revenue'] ? 'Subscription Revenue' : 'Job Revenue'))
+            await postEntry(d, tx.tenantId, map, { date: new Date(), description: `Payment received — ${inv?.number || tx.invoiceId}`, category: revAcct, type: 'income', status: 'reconciled', metadata: { invoiceId: tx.invoiceId, provider: 'stripe', sessionId } , lines: incomeLines(revAcct, live.amountTotal) })
+          }
+        }
+        return cors(NextResponse.json({ status: 'paid', paymentStatus: 'paid', invoiceId: tx.invoiceId, tenantId: tx.tenantId, amount: live.amountTotal }))
+      }
+      if (live.status === 'expired') {
+        await d.collection('payment_transactions').updateOne({ sessionId, status: { $ne: 'paid' } }, { $set: { status: 'expired', updatedAt: new Date() } })
+      }
+      return cors(NextResponse.json({ status: live.status, paymentStatus: live.paymentStatus, invoiceId: tx.invoiceId, tenantId: tx.tenantId }))
     }
 
     return cors(NextResponse.json({ error: `Route ${route} not found` }, { status: 404 }))

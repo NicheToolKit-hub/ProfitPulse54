@@ -1,63 +1,30 @@
 'use client';
 
-// ProfitPulse wordmark: the stem of "P" extends into a heart-rate pulse
-// wave that transitions into an upward financial growth arrow.
-export function PulseMark({ size = 34, className = '' }) {
+// PulseProfit brand logo (user-provided crest). The source image is a tall poster
+// (832x1248) containing crown+crest, the PULSEPROFIT wordmark, and a feature strip.
+// We crop with CSS to show just the parts we need:
+//   variant="crest"  -> crown + circular crest (compact, for the app header / loader)
+//   variant="lockup" -> crest + PULSEPROFIT wordmark (for marketing / landing)
+const SRC = '/logo.jpg';
+const RATIO = 832 / 1248; // width / height of source
+
+export function Logo({ variant = 'crest', size = 40, className = '' }) {
+  const f = variant === 'lockup' ? 0.74 : 0.58; // top fraction of the image to reveal
+  const height = size;
+  const width = (height * RATIO) / f;
   return (
-    <svg
-      width={size}
-      height={size}
-      viewBox="0 0 48 48"
-      fill="none"
+    <div
       className={className}
-      aria-hidden="true"
+      style={{ height, width, overflow: 'hidden', display: 'inline-block', lineHeight: 0 }}
     >
-      {/* P bowl */}
-      <path
-        d="M10 6h10a9 9 0 0 1 0 18h-6"
-        stroke="hsl(189 94% 43%)"
-        strokeWidth="4"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-      {/* P stem descending, becoming the pulse baseline */}
-      <path
-        d="M10 6v28"
-        stroke="hsl(189 94% 43%)"
-        strokeWidth="4"
-        strokeLinecap="round"
-      />
-      {/* pulse wave -> growth arrow */}
-      <path
-        d="M10 34h6l4-9 5 15 5-24 4 12h5"
-        stroke="hsl(160 84% 39%)"
-        strokeWidth="3.5"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-      {/* arrow head */}
-      <path
-        d="M40 28l4-4 0 8"
-        stroke="hsl(160 84% 39%)"
-        strokeWidth="3.5"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </svg>
+      <img src={SRC} alt="PulseProfit" style={{ width: '100%', display: 'block' }} />
+    </div>
   );
 }
 
-export function Logo({ size = 34, showText = true, className = '' }) {
-  return (
-    <div className={`flex items-center gap-2.5 ${className}`}>
-      <PulseMark size={size} />
-      {showText && (
-        <span className="text-xl font-extrabold tracking-tight text-foreground">
-          Profit<span className="text-primary">Pulse</span>
-        </span>
-      )}
-    </div>
-  );
+// Kept for backward compatibility (used by the loading state).
+export function PulseMark({ size = 48, className = '' }) {
+  return <Logo variant="crest" size={size} className={className} />;
 }
 
 export default Logo;
